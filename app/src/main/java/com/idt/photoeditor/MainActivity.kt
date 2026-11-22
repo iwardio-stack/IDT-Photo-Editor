@@ -41,25 +41,18 @@ private val MUTED = Color(0xFF929292)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         setContent {
-            IDTPhotoApp(
-                onSave = { bitmap -> savePhoto(bitmap) }
-            )
+            IDTPhotoApp { bitmap -> savePhoto(bitmap) }
         }
     }
 
     private fun savePhoto(bitmap: Bitmap) {
         try {
             val name = "IDT_EDIT_${System.currentTimeMillis()}.jpg"
-
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
                 put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                put(
-                    MediaStore.Images.Media.RELATIVE_PATH,
-                    "Pictures/IDT Photo Editor"
-                )
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/IDT Photo Editor")
             }
 
             val uri = contentResolver.insert(
@@ -68,24 +61,15 @@ class MainActivity : ComponentActivity() {
             )
 
             if (uri != null) {
-                contentResolver.openOutputStream(uri)?.use { stream ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
+                contentResolver.openOutputStream(uri)?.use {
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it)
                 }
-
-                Toast.makeText(
-                    this,
-                    "Photo saved to gallery",
-                    Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this, "Photo saved to gallery", Toast.LENGTH_LONG).show()
             } else {
                 Toast.makeText(this, "Save failed", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            Toast.makeText(
-                this,
-                "Could not save: ${e.message}",
-                Toast.LENGTH_LONG
-            ).show()
+            Toast.makeText(this, "Could not save: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 }
@@ -99,6 +83,7 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
     var contrast by remember { mutableFloatStateOf(1f) }
     var saturation by remember { mutableFloatStateOf(1f) }
     var busy by remember { mutableStateOf(false) }
+    var showOriginal by remember { mutableStateOf(false) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -107,13 +92,14 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
     ) { uri ->
         if (uri != null) {
             try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val bmp = BitmapFactory.decodeStream(stream)
-                    original = bmp
-                    edited = bmp
+                context.contentResolver.openInputStream(uri)?.use {
+                    val bitmap = BitmapFactory.decodeStream(it)
+                    original = bitmap
+                    edited = bitmap
                     brightness = 0f
                     contrast = 1f
                     saturation = 1f
+                    showOriginal = false
                 }
             } catch (e: Exception) {
                 Toast.makeText(context, "Could not open photo", Toast.LENGTH_SHORT).show()
@@ -132,10 +118,7 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
         }
     }
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = BG
-    ) {
+    Surface(modifier = Modifier.fillMaxSize(), color = BG) {
         if (original == null) {
             Column(
                 modifier = Modifier
@@ -177,32 +160,18 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
                 }
 
                 Spacer(Modifier.height(25.dp))
-
                 Text("PHOTO TOOLS", color = WHITE, fontWeight = FontWeight.Bold)
 
-                Spacer(Modifier.height(10.dp))
-
-                HomeTool(
-                    "PHOTO ENHANCER",
-                    "Brightness • Contrast • Saturation"
-                ) {
+                HomeTool("PHOTO ENHANCER", "Brightness • Contrast • Saturation") {
                     picker.launch("image/*")
                 }
 
-                HomeTool(
-                    "PHOTO EDITOR",
-                    "Select and adjust a photograph"
-                ) {
+                HomeTool("PHOTO EDITOR", "Select and adjust a photograph") {
                     picker.launch("image/*")
                 }
 
                 Spacer(Modifier.height(30.dp))
-
-                Text(
-                    "I.D.T. STEELWORKS & ENGINEERING",
-                    color = MUTED,
-                    fontSize = 10.sp
-                )
+                Text("I.D.T. STEELWORKS & ENGINEERING", color = MUTED, fontSize = 10.sp)
             }
         } else {
             Column(
@@ -217,25 +186,24 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
                     modifier = Modifier.clickable {
                         original = null
                         edited = null
+                        showOriginal = false
                     }
                 )
 
                 Spacer(Modifier.height(15.dp))
 
-                Text(
-                    "PHOTO ENHANCER",
-                    color = LIME,
-                    fontSize = 23.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("PHOTO ENHANCER", color = LIME, fontSize = 23.sp, fontWeight = FontWeight.Bold)
                 Text("Adjust your image", color = MUTED)
 
                 Spacer(Modifier.height(15.dp))
 
-                edited?.let { bmp ->
+                // BEFORE / AFTER PHOTO PREVIEW
+                val previewBitmap = if (showOriginal) original else edited
+
+                previewBitmap?.let {
                     Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Edited photo preview",
+                        bitmap = it.asImageBitmap(),
+                        contentDescription = if (showOriginal) "Original photo" else "Edited photo",
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(300.dp)
@@ -244,8 +212,34 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
                     )
                 }
 
+                // ORIGINAL / EDITED TOGGLE
+                Button(
+                    onClick = { showOriginal = !showOriginal },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (showOriginal) PANEL else LIME,
+                        contentColor = if (showOriginal) LIME else BG
+                    )
+                ) {
+                    Text(
+                        if (showOriginal) "SHOW EDITED PHOTO" else "SHOW ORIGINAL PHOTO",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Text(
+                    if (showOriginal) "ORIGINAL • UNEDITED" else "EDITED PREVIEW",
+                    color = if (showOriginal) WHITE else LIME,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
                 Spacer(Modifier.height(15.dp))
 
+                // ADJUSTMENTS
                 AdjustmentSlider(
                     "Brightness",
                     brightness,
@@ -278,6 +272,7 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
                         brightness = 0f
                         contrast = 1f
                         saturation = 1f
+                        showOriginal = false
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -297,7 +292,10 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
                 }
 
                 OutlinedButton(
-                    onClick = { picker.launch("image/*") },
+                    onClick = {
+                        picker.launch("image/*")
+                        showOriginal = false
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("CHOOSE ANOTHER PHOTO", color = LIME)
@@ -310,11 +308,7 @@ fun IDTPhotoApp(onSave: (Bitmap) -> Unit) {
 }
 
 @Composable
-fun HomeTool(
-    title: String,
-    description: String,
-    onClick: () -> Unit
-) {
+fun HomeTool(title: String, description: String, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -371,9 +365,7 @@ fun adjustBitmap(
     val pixels = IntArray(width * height)
 
     result.getPixels(pixels, 0, width, 0, 0, width, height)
-
     val hsv = FloatArray(3)
-    val offset = brightness
 
     for (i in pixels.indices) {
         val pixel = pixels[i]
@@ -382,17 +374,14 @@ fun adjustBitmap(
         var g = AColor.green(pixel).toFloat()
         var b = AColor.blue(pixel).toFloat()
 
-        r = ((r - 128f) * contrast + 128f + offset).coerceIn(0f, 255f)
-        g = ((g - 128f) * contrast + 128f + offset).coerceIn(0f, 255f)
-        b = ((b - 128f) * contrast + 128f + offset).coerceIn(0f, 255f)
+        r = ((r - 128f) * contrast + 128f + brightness).coerceIn(0f, 255f)
+        g = ((g - 128f) * contrast + 128f + brightness).coerceIn(0f, 255f)
+        b = ((b - 128f) * contrast + 128f + brightness).coerceIn(0f, 255f)
 
         AColor.RGBToHSV(r.toInt(), g.toInt(), b.toInt(), hsv)
         hsv[1] = (hsv[1] * saturation).coerceIn(0f, 1f)
 
-        pixels[i] = AColor.HSVToColor(
-            AColor.alpha(pixel),
-            hsv
-        )
+        pixels[i] = AColor.HSVToColor(AColor.alpha(pixel), hsv)
     }
 
     result.setPixels(pixels, 0, width, 0, 0, width, height)
