@@ -311,7 +311,7 @@ private fun processBitmap(src: Bitmap, brightness: Float, contrast: Float, satur
         val s = saturation
         val sr = 0.213f * (1 - s); val sg = 0.715f * (1 - s); val sb = 0.072f * (1 - s)
         set(floatArrayOf(sr+s, sg, sb, 0f, brightness*255, sr, sg+s, sb, 0f, brightness*255, sr, sg, sb+s, 0f, brightness*255, 0f,0f,0f,1f,0f))
-        postConcat(android.graphics.ColorMatrix().apply { set(floatArrayOf(contrast,0f,0f,0f,128f*(1-contrast),0f,contrast,0f,0f,128f*(1-contrast),0f,0f,contrast,0f,128f*(1-contrast),0f,0f,0f,1f,0f) })
+        postConcat(android.graphics.ColorMatrix().apply { set(floatArrayOf(contrast,0f,0f,0f,128f*(1-contrast),0f,contrast,0f,0f,128f*(1-contrast),0f,0f,contrast,0f,128f*(1-contrast),0f,0f,0f,1f,0f)) })
     }
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(matrix) }
     canvas.drawBitmap(src, 0f, 0f, paint)
