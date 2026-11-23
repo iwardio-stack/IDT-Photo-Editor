@@ -1,13 +1,15 @@
 package com.idt.photoeditor
 
 import android.content.ContentValues
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color as AndroidColor
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Color as AndroidColor
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -15,1034 +17,345 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.*
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.io.OutputStream
-import kotlin.math.max
-import kotlin.math.min
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.io.InputStream
 
-private val Lime = Color(0xFF39FF14)
-private val Black = Color(0xFF080808)
-private val Panel = Color(0xFF171717)
-private val Panel2 = Color(0xFF222222)
-private val White = Color.White
-private val Muted = Color(0xFFAAAAAA)
+private val Lime = Color(0xFF76FF00)
+private val Bg = Color(0xFF050505)
+private val SurfaceDark = Color(0xFF171717)
+private val BorderDark = Color(0xFF343434)
+private val TextGrey = Color(0xFFAAAAAA)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            IDTPhotoApp()
+        setContent { IDTPhotoEditorApp() }
+    }
+}
+
+
+@Composable
+private fun IDTPhotoEditorApp() {
+    MaterialTheme(colorScheme = darkColorScheme(background = Bg, surface = SurfaceDark, primary = Lime)) {
+        Surface(Modifier.fillMaxSize(), color = Bg) {
+            var screen by remember { mutableStateOf("home") }
+            var selectedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+            var batchBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+            var batchIndex by remember { mutableIntStateOf(0) }
+            var openCaption by remember { mutableStateOf(false) }
+            val context = LocalContext.current
+            val singlePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                uri?.let { selectedBitmap = loadBitmap(context, it); batchBitmaps = emptyList(); screen = "editor" }
+            }
+            val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+                val loaded = uris.mapNotNull { loadBitmap(context, it) }
+                if (loaded.isNotEmpty()) { batchBitmaps = loaded; batchIndex = 0; selectedBitmap = loaded[0]; screen = "batch" }
+            }
+            when (screen) {
+                "editor" -> EditorScreen(selectedBitmap, onBack = { screen = "home" }, onCaption = { openCaption = true })
+                "batch" -> BatchScreen(batchBitmaps, batchIndex, onIndex = { batchIndex = it; selectedBitmap = batchBitmaps.getOrNull(it) }, onBack = { screen = "home" })
+                else -> HomeScreen(
+                    onSingle = { singlePicker.launch("image/*") },
+                    onBatch = { multiPicker.launch("image/*") },
+                    onAuto = { singlePicker.launch("image/*") },
+                    onCaption = { openCaption = true },
+                    onWatermark = { singlePicker.launch("image/*") },
+                    onSaved = { Toast.makeText(context, "Saved photos are in your Gallery under Pictures/IDT Photography", Toast.LENGTH_LONG).show() }
+                )
+            }
+            if (openCaption) CaptionDialog(onClose = { openCaption = false })
         }
     }
 }
 
+
 @Composable
-fun IDTPhotoApp() {
+private fun HomeScreen(
+    onSingle: () -> Unit, onBatch: () -> Unit, onAuto: () -> Unit, onCaption: () -> Unit,
+    onWatermark: () -> Unit, onSaved: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().background(Bg)) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 16.dp)) {
+            LogoHeader()
+            Spacer(Modifier.height(20.dp))
+            Text("PHOTO EDIT", color = TextGrey, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+            Spacer(Modifier.height(18.dp))
+            Text("YOUR PHOTOS.\nYOUR STYLE.", color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 31.sp)
+            Spacer(Modifier.height(8.dp))
+            Text("Enhance, edit and make every moment yours.", color = TextGrey, fontSize = 14.sp)
+            Spacer(Modifier.height(20.dp))
+            val cards = listOf(
+                HomeCard("Edit Photo", "Single photo", Icons.Default.AddPhotoAlternate, onSingle),
+                HomeCard("Batch Edit", "Multiple photos", Icons.Default.Collections, onBatch),
+                HomeCard("Auto Enhance", "AI Improve & Restore", Icons.Default.AutoFixHigh, onAuto),
+                HomeCard("Caption & Post", "Write for social media", Icons.Default.TextFields, onCaption),
+                HomeCard("Add Watermark", "Add IDT logo to photos", Icons.Default.Brush, onWatermark),
+                HomeCard("My Edits", "Saved photos", Icons.Default.PhotoLibrary, onSaved)
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                cards.chunked(2).forEach { rowCards ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        rowCards.forEach { card -> HomeCardView(card, Modifier.weight(1f)) }
+                        if (rowCards.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("IDT PHOTOGRAPHY  •  CAPTURING MOMENTS", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp))
+        }
+    }
+}
+
+private data class HomeCard(val title: String, val subtitle: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val action: () -> Unit)
+
+@Composable
+private fun HomeCardView(card: HomeCard, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(17.dp)).background(SurfaceDark).border(1.dp, BorderDark, RoundedCornerShape(17.dp)).clickable { card.action() }.padding(14.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Icon(card.icon, contentDescription = card.title, tint = Lime, modifier = Modifier.size(33.dp))
+        Column {
+            Text(card.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(card.subtitle, color = TextGrey, fontSize = 11.sp, lineHeight = 14.sp)
+        }
+    }
+}
+
+
+@Composable
+private fun LogoHeader() {
     val context = LocalContext.current
+    val logo = remember { loadLogo(context) }
+    Column(horizontalAlignment = Alignment.Start) {
+        if (logo != null) {
+            Image(bitmap = logo.asImageBitmap(), contentDescription = "IDT Photography Logo", modifier = Modifier.size(108.dp))
+        } else {
+            Text("IDT", color = Lime, fontSize = 44.sp, fontWeight = FontWeight.Black)
+            Text("P H O T O G R A P H Y", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("PHOTO EDIT", color = TextGrey, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+    }
+}
 
-    var currentScreen by remember { mutableStateOf("home") }
-    var originalBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var currentBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var logoBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    var selectedBatch by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-    var batchIndex by remember { mutableIntStateOf(0) }
-
+@Composable
+private fun EditorScreen(bitmap: Bitmap?, onBack: () -> Unit, onCaption: () -> Unit) {
+    val context = LocalContext.current
+    var before by remember { mutableStateOf(false) }
     var brightness by remember { mutableFloatStateOf(0f) }
     var contrast by remember { mutableFloatStateOf(1f) }
     var saturation by remember { mutableFloatStateOf(1f) }
     var sharpness by remember { mutableFloatStateOf(0f) }
-
-    var showBefore by remember { mutableStateOf(false) }
-    var watermarkEnabled by remember { mutableStateOf(true) }
-    var watermarkCorner by remember { mutableStateOf("Bottom right") }
-    var watermarkSize by remember { mutableFloatStateOf(0.22f) }
-    var watermarkOpacity by remember { mutableFloatStateOf(0.75f) }
-
-    var captionText by remember { mutableStateOf("") }
-    var captionLanguage by remember { mutableStateOf("English") }
-    var captionStyle by remember { mutableStateOf("Natural") }
-
-    LaunchedEffect(Unit) {
-        logoBitmap = try {
-            context.assets.open("idt_logo_transparent.png").use {
-                BitmapFactory.decodeStream(it)
-            }
-        } catch (_: Exception) {
-            null
-        }
+    var autoMode by remember { mutableStateOf(false) }
+    var watermark by remember { mutableStateOf(false) }
+    var logoCorner by remember { mutableStateOf(4) }
+    var opacity by remember { mutableFloatStateOf(0.8f) }
+    var wmScale by remember { mutableFloatStateOf(0.22f) }
+    val edited = remember(bitmap, brightness, contrast, saturation, sharpness, before) {
+        if (bitmap == null || before) bitmap else processBitmap(bitmap, brightness, contrast, saturation, sharpness)
     }
-
-    val singlePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            try {
-                val bitmap = context.contentResolver.openInputStream(uri)?.use {
-                    BitmapFactory.decodeStream(it)
+    Column(Modifier.fillMaxSize().background(Bg)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = Lime) }
+            Text("Edit Photo", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f))
+            IconButton(onClick = { if (bitmap != null) saveEdited(context, edited ?: bitmap, watermark, logoCorner, opacity, wmScale) }) { Icon(Icons.Default.Save, "Save", tint = Lime) }
+            IconButton(onClick = onCaption) { Icon(Icons.Default.Share, "Caption", tint = Lime) }
+        }
+        if (bitmap == null) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No photo selected", color = TextGrey) }
+        } else {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
+                Image((edited ?: bitmap).asImageBitmap(), contentDescription = "Edited preview", modifier = Modifier.fillMaxSize())
+                if (watermark) WatermarkOverlay(logoCorner, wmScale, opacity)
+                Row(Modifier.align(Alignment.TopCenter).padding(10.dp).clip(RoundedCornerShape(30.dp)).background(Color(0xAA111111)).clickable { before = !before }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text(if (before) "BEFORE • Tap to view after" else "AFTER • Tap to view before", color = Color.White, fontSize = 11.sp)
                 }
-                if (bitmap != null) {
-                    originalBitmap = bitmap
-                    currentBitmap = bitmap
-                    brightness = 0f
-                    contrast = 1f
-                    saturation = 1f
-                    sharpness = 0f
-                    currentScreen = "editor"
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Could not open photo", Toast.LENGTH_SHORT).show()
             }
-        }
-    }
-
-    val batchPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetMultipleContents()
-    ) { uris ->
-        val list = uris.mapNotNull { uri ->
-            try {
-                context.contentResolver.openInputStream(uri)?.use {
-                    BitmapFactory.decodeStream(it)
+            Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    EditorAction("Auto", Icons.Default.AutoFixHigh, Modifier.weight(1f)) { autoMode = true; brightness = 0.08f; contrast = 1.12f; saturation = 1.12f; sharpness = 0.25f }
+                    EditorAction("Reset", Icons.Default.RestartAlt, Modifier.weight(1f)) { autoMode = false; brightness = 0f; contrast = 1f; saturation = 1f; sharpness = 0f; before = false }
+                    EditorAction("Caption", Icons.Default.TextFields, Modifier.weight(1f), onCaption)
                 }
-            } catch (_: Exception) {
-                null
-            }
-        }
-        if (list.isNotEmpty()) {
-            selectedBatch = list
-            batchIndex = 0
-            originalBitmap = list[0]
-            currentBitmap = list[0]
-            currentScreen = "batch"
-        }
-    }
-
-    BackHandler(currentScreen != "home") {
-        currentScreen = "home"
-    }
-
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            background = Black,
-            surface = Panel,
-            primary = Lime,
-            onPrimary = Black,
-            onBackground = White,
-            onSurface = White
-        )
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = Black
-        ) {
-            when (currentScreen) {
-                "home" -> HomeScreen(
-                    onSingle = { singlePicker.launch("image/*") },
-                    onBatch = { batchPicker.launch("image/*") },
-                    onCaptions = { currentScreen = "captions" },
-                    onEdits = {
-                        Toast.makeText(
-                            context,
-                            "Your saved photos are in your Gallery.",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                )
-
-                "editor" -> EditorScreen(
-                    original = originalBitmap,
-                    logo = logoBitmap,
-                    brightness = brightness,
-                    contrast = contrast,
-                    saturation = saturation,
-                    sharpness = sharpness,
-                    showBefore = showBefore,
-                    watermarkEnabled = watermarkEnabled,
-                    watermarkCorner = watermarkCorner,
-                    watermarkSize = watermarkSize,
-                    watermarkOpacity = watermarkOpacity,
-                    onBrightness = { brightness = it },
-                    onContrast = { contrast = it },
-                    onSaturation = { saturation = it },
-                    onSharpness = { sharpness = it },
-                    onBefore = { showBefore = it },
-                    onWatermark = { watermarkEnabled = it },
-                    onCorner = { watermarkCorner = it },
-                    onSize = { watermarkSize = it },
-                    onOpacity = { watermarkOpacity = it },
-                    onHome = { currentScreen = "home" },
-                    onSave = {
-                        val source = originalBitmap
-                        if (source != null) {
-                            val edited = processBitmap(
-                                source, brightness, contrast, saturation, sharpness
-                            )
-                            val finalBitmap = if (watermarkEnabled && logoBitmap != null) {
-                                applyWatermark(
-                                    edited, logoBitmap!!, watermarkCorner,
-                                    watermarkSize, watermarkOpacity
-                                )
-                            } else edited
-
-                            saveBitmap(context, finalBitmap)
+                SliderLine("Brightness", brightness, -0.5f, 0.5f, { brightness = it })
+                SliderLine("Contrast", contrast, 0.5f, 1.8f, { contrast = it })
+                SliderLine("Saturation", saturation, 0f, 2f, { saturation = it })
+                SliderLine("Sharpness", sharpness, 0f, 1f, { sharpness = it })
+                Row(verticalAlignment = Alignment.CenterVertically) { Text("IDT Watermark", color = Color.White, modifier = Modifier.weight(1f)); Switch(watermark, { watermark = it }, colors = SwitchDefaults.colors(checkedThumbColor = Lime, checkedTrackColor = Lime.copy(alpha = .4f))) }
+                if (watermark) {
+                    Text("Position", color = TextGrey, fontSize = 12.sp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        listOf("↖", "↗", "↙", "↘", "◎").forEachIndexed { index, label ->
+                            Text(label, color = if (logoCorner == index) Lime else Color.White, modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(SurfaceDark).clickable { logoCorner = index }.padding(12.dp), fontSize = 18.sp)
                         }
                     }
-                )
-
-                "batch" -> BatchScreen(
-                    photos = selectedBatch,
-                    index = batchIndex,
-                    logo = logoBitmap,
-                    onIndex = { newIndex ->
-                        batchIndex = newIndex
-                        originalBitmap = selectedBatch[newIndex]
-                        currentBitmap = selectedBatch[newIndex]
-                    },
-                    onHome = { currentScreen = "home" },
-                    onEditCurrent = {
-                        originalBitmap = selectedBatch[batchIndex]
-                        currentScreen = "editor"
-                    }
-                )
-
-                "captions" -> CaptionScreen(
-                    text = captionText,
-                    language = captionLanguage,
-                    style = captionStyle,
-                    onText = { captionText = it },
-                    onLanguage = { captionLanguage = it },
-                    onStyle = { captionStyle = it },
-                    onHome = { currentScreen = "home" }
-                )
+                    SliderLine("Logo size", wmScale, .08f, .45f, { wmScale = it })
+                    SliderLine("Opacity", opacity, .1f, 1f, { opacity = it })
+                }
+                Button(onClick = { saveEdited(context, edited ?: bitmap, watermark, logoCorner, opacity, wmScale) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Color.Black)) { Text("SAVE HD JPG", fontWeight = FontWeight.Bold) }
             }
         }
     }
 }
 
+
 @Composable
-fun HomeScreen(
-    onSingle: () -> Unit,
-    onBatch: () -> Unit,
-    onCaptions: () -> Unit,
-    onEdits: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp)
-    ) {
-        Spacer(Modifier.height(8.dp))
-
-        Text(
-            "IDT",
-            color = Lime,
-            fontSize = 42.sp,
-            fontWeight = FontWeight.Black
-        )
-        Text(
-            "PHOTOGRAPHY",
-            color = White,
-            fontSize = 14.sp,
-            letterSpacing = 5.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "PHOTO EDITOR",
-            color = Muted,
-            fontSize = 13.sp,
-            letterSpacing = 2.sp
-        )
-
-        Spacer(Modifier.height(24.dp))
-
-        Text(
-            "YOUR PHOTOS.\nYOUR STYLE.",
-            color = White,
-            fontSize = 30.sp,
-            fontWeight = FontWeight.ExtraBold,
-            lineHeight = 34.sp
-        )
-
-        Spacer(Modifier.height(8.dp))
-
-        Text(
-            "Enhance, edit and make every moment yours.",
-            color = Muted,
-            fontSize = 14.sp
-        )
-
-        Spacer(Modifier.height(24.dp))
-
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(390.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            userScrollEnabled = false
-        ) {
-            item {
-                DashboardCard(
-                    icon = "✦",
-                    title = "Single Photo",
-                    description = "Edit one photo",
-                    onClick = onSingle
-                )
-            }
-            item {
-                DashboardCard(
-                    icon = "▣",
-                    title = "Batch Photos",
-                    description = "Select multiple photos",
-                    onClick = onBatch
-                )
-            }
-            item {
-                DashboardCard(
-                    icon = "✧",
-                    title = "Auto Enhance",
-                    description = "Use quick edit presets",
-                    onClick = onSingle
-                )
-            }
-            item {
-                DashboardCard(
-                    icon = "Aa",
-                    title = "Caption & Post",
-                    description = "Create captions",
-                    onClick = onCaptions
-                )
-            }
-            item {
-                DashboardCard(
-                    icon = "◈",
-                    title = "Watermark",
-                    description = "Logo controls in editor",
-                    onClick = onSingle
-                )
-            }
-            item {
-                DashboardCard(
-                    icon = "▤",
-                    title = "My Edits",
-                    description = "View saved photos",
-                    onClick = onEdits
-                )
-            }
-        }
-
-        Spacer(Modifier.height(18.dp))
-
-        Text(
-            "IDT PHOTOGRAPHY  •  CAPTURING MOMENTS",
-            color = Lime,
-            fontSize = 11.sp,
-            letterSpacing = 1.5.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
+private fun EditorAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier, action: () -> Unit) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(SurfaceDark).clickable { action() }.padding(vertical = 12.dp).then(modifier), horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, label, tint = Lime, modifier = Modifier.size(24.dp)); Spacer(Modifier.height(5.dp)); Text(label, color = Color.White, fontSize = 11.sp)
     }
 }
 
 @Composable
-fun DashboardCard(
-    icon: String,
-    title: String,
-    description: String,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(178.dp)
-            .background(Panel, RoundedCornerShape(16.dp))
-            .border(1.dp, Color(0xFF303030), RoundedCornerShape(16.dp))
-            .clickable { onClick() }
-            .padding(16.dp),
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            icon,
-            color = Lime,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Column {
-            Text(
-                title,
-                color = White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                description,
-                color = Muted,
-                fontSize = 12.sp,
-                lineHeight = 16.sp
-            )
-        }
+private fun SliderLine(label: String, value: Float, min: Float, max: Float, onValue: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(label, color = Color.White, fontSize = 12.sp, modifier = Modifier.width(76.dp))
+        Slider(value, onValue, valueRange = min..max, modifier = Modifier.weight(1f), colors = SliderDefaults.colors(thumbColor = Lime, activeTrackColor = Lime))
     }
 }
 
+
 @Composable
-fun EditorScreen(
-    original: Bitmap?,
-    logo: Bitmap?,
-    brightness: Float,
-    contrast: Float,
-    saturation: Float,
-    sharpness: Float,
-    showBefore: Boolean,
-    watermarkEnabled: Boolean,
-    watermarkCorner: String,
-    watermarkSize: Float,
-    watermarkOpacity: Float,
-    onBrightness: (Float) -> Unit,
-    onContrast: (Float) -> Unit,
-    onSaturation: (Float) -> Unit,
-    onSharpness: (Float) -> Unit,
-    onBefore: (Boolean) -> Unit,
-    onWatermark: (Boolean) -> Unit,
-    onCorner: (String) -> Unit,
-    onSize: (Float) -> Unit,
-    onOpacity: (Float) -> Unit,
-    onHome: () -> Unit,
-    onSave: () -> Unit
-) {
+private fun WatermarkOverlay(corner: Int, scale: Float, opacity: Float) {
     val context = LocalContext.current
-
-    val edited = remember(original, brightness, contrast, saturation, sharpness) {
-        original?.let {
-            processBitmap(it, brightness, contrast, saturation, sharpness)
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "← BACK",
-                color = Lime,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable { onHome() }
-            )
-            Text(
-                "PHOTO EDITOR",
-                color = White,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        if (original != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 240.dp, max = 440.dp)
-                    .background(Panel, RoundedCornerShape(14.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    bitmap = (if (showBefore) original else edited ?: original).asImageBitmap(),
-                    contentDescription = "Photo preview",
-                    modifier = Modifier.fillMaxWidth(),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
-                )
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        OutlinedButton(
-            onClick = { onBefore(!showBefore) },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Lime)
-        ) {
-            Text(if (showBefore) "SHOW EDITED" else "BEFORE / ORIGINAL")
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Button(
-            onClick = {
-                onBrightness(0.05f)
-                onContrast(1.12f)
-                onSaturation(1.12f)
-                onSharpness(0.2f)
-                onBefore(false)
-                Toast.makeText(context, "Enhance preset applied", Toast.LENGTH_SHORT).show()
-            },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Lime,
-                contentColor = Black
-            )
-        ) {
-            Text("✦  AUTO ENHANCE", fontWeight = FontWeight.Bold)
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        Text("ADJUSTMENTS", color = Lime, fontWeight = FontWeight.Bold)
-        AdjustmentSlider("Brightness", brightness, -0.5f, 0.5f, onBrightness)
-        AdjustmentSlider("Contrast", contrast, 0.5f, 1.8f, onContrast)
-        AdjustmentSlider("Saturation", saturation, 0f, 2f, onSaturation)
-        AdjustmentSlider("Sharpness", sharpness, 0f, 1f, onSharpness)
-
-        Spacer(Modifier.height(12.dp))
-
-        Text("WATERMARK", color = Lime, fontWeight = FontWeight.Bold)
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Use IDT logo", color = White)
-            Spacer(Modifier.weight(1f))
-            Switch(
-                checked = watermarkEnabled,
-                onCheckedChange = onWatermark,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Lime,
-                    checkedTrackColor = Color(0xFF315B24)
-                )
-            )
-        }
-
-        if (watermarkEnabled) {
-            Text("Position", color = White, fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("Top left", "Top right", "Bottom left", "Bottom right").forEach { corner ->
-                    FilterChip(
-                        selected = watermarkCorner == corner,
-                        onClick = { onCorner(corner) },
-                label = { Text(corner, fontSize = 10.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Lime,
-                            selectedLabelColor = Black
-                        )
-                    )
-                }
-            }
-
-            AdjustmentSlider("Logo size", watermarkSize, 0.08f, 0.45f, onSize)
-            AdjustmentSlider("Logo opacity", watermarkOpacity, 0.1f, 1f, onOpacity)
-
-            if (logo == null) {
-                Text(
-                    "Logo asset not loaded. Check assets folder.",
-                    color = Color.Red,
-                    fontSize = 12.sp
-                )
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        Button(
-            onClick = onSave,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Lime,
-                contentColor = Black
-            )
-        ) {
-            Text("SAVE HD PHOTO", fontWeight = FontWeight.ExtraBold)
-        }
-
-        Spacer(Modifier.height(24.dp))
+    val logo = remember { loadLogo(context) } ?: return
+    val align = when (corner) { 0 -> Alignment.TopStart; 1 -> Alignment.TopEnd; 2 -> Alignment.BottomStart; 3 -> Alignment.BottomEnd; else -> Alignment.Center }
+    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = align) {
+        Image(logo.asImageBitmap(), contentDescription = "IDT watermark", modifier = Modifier.fillMaxWidth(scale).graphicsLayer(alpha = opacity))
     }
 }
+
 
 @Composable
-fun AdjustmentSlider(
-    label: String,
-    value: Float,
-    minimum: Float,
-    maximum: Float,
-    onValue: (Float) -> Unit
-) {
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(label, color = White, fontSize = 13.sp)
-            Text(
-                String.format("%.2f", value),
-                color = Lime,
-                fontSize = 12.sp
-            )
+private fun BatchScreen(bitmaps: List<Bitmap>, index: Int, onIndex: (Int) -> Unit, onBack: () -> Unit) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxSize().background(Bg).padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = Lime) }; Text("Batch Photos", color = Color.White, fontWeight = FontWeight.Bold) }
+        if (bitmaps.isEmpty()) Text("No photos selected", color = TextGrey)
+        else {
+            Image(bitmaps[index].asImageBitmap(), contentDescription = "Batch preview", modifier = Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)))
+            Text("Photo ${index + 1} of ${bitmaps.size}", color = TextGrey, modifier = Modifier.padding(vertical = 12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp) ) {
+                Button(onClick = { onIndex((index - 1).coerceAtLeast(0)) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = SurfaceDark)) { Text("Previous") }
+                Button(onClick = { onIndex((index + 1).coerceAtMost(bitmaps.lastIndex)) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Color.Black)) { Text("Next") }
+            }
+            Button(onClick = { bitmaps.forEach { saveEdited(context, it, false, 4, 1f, .22f) }; Toast.makeText(context, "Saved selected photos", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Color.Black)) { Text("SAVE ALL PHOTOS") }
         }
-        Slider(
-            value = value,
-            onValueChange = onValue,
-            valueRange = minimum..maximum,
-            colors = SliderDefaults.colors(
-                thumbColor = Lime,
-                activeTrackColor = Lime,
-                inactiveTrackColor = Panel2
-            )
-        )
     }
 }
+
 
 @Composable
-fun BatchScreen(
-    photos: List<Bitmap>,
-    index: Int,
-    logo: Bitmap?,
-    onIndex: (Int) -> Unit,
-    onHome: () -> Unit,
-    onEditCurrent: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Text(
-            "← BACK",
-            color = Lime,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.clickable { onHome() }
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        Text(
-            "BATCH PHOTOS",
-            color = White,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.ExtraBold
-        )
-
-        Text(
-            "${photos.size} photos selected",
-            color = Muted
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        if (photos.isNotEmpty()) {
-            Image(
-                bitmap = photos[index].asImageBitmap(),
-                contentDescription = "Selected photo ${index + 1}",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentScale = androidx.compose.ui.layout.ContentScale.Fit
-            )
+private fun CaptionDialog(onClose: () -> Unit) {
+    var language by remember { mutableStateOf("English") }
+    var tone by remember { mutableStateOf("Natural") }
+    var platform by remember { mutableStateOf("Instagram") }
+    var caption by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    AlertDialog(onDismissRequest = onClose, containerColor = SurfaceDark, title = { Text("Caption & Post", color = Lime) }, text = {
+        Column {
+            Text("Language", color = TextGrey); Row { listOf("English", "Afrikaans").forEach { Text(it, color = if (language == it) Lime else Color.White, modifier = Modifier.clickable { language = it }.padding(8.dp)) } }
+            Text("Style", color = TextGrey); Row { listOf("Natural", "Bold", "Emotional").forEach { Text(it, color = if (tone == it) Lime else Color.White, modifier = Modifier.clickable { tone = it }.padding(6.dp)) } }
+            Text("Platform", color = TextGrey); Row { listOf("Instagram", "Facebook", "WhatsApp").forEach { Text(it, color = if (platform == it) Lime else Color.White, modifier = Modifier.clickable { platform = it }.padding(6.dp)) } }
+            OutlinedTextField(caption, { caption = it }, label = { Text("Your caption") }, minLines = 3)
+            Button(onClick = { caption = captionTemplate(language, tone, platform) }, colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Color.Black), modifier = Modifier.fillMaxWidth()) { Text("Generate Caption") }
+            Button(onClick = { val clip = android.content.ClipData.newPlainText("Caption", caption); (context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip); Toast.makeText(context, "Caption copied", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = SurfaceDark)) { Text("Copy Caption", color = Lime) }
         }
+    }, confirmButton = { TextButton(onClick = onClose) { Text("Close", color = Lime) } })
+}
 
-        Spacer(Modifier.height(12.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            OutlinedButton(
-                onClick = { if (index > 0) onIndex(index - 1) },
-                enabled = index > 0
-            ) {
-                Text("PREVIOUS")
-            }
-
-            Text(
-                "${index + 1} / ${photos.size}",
-                color = Lime,
-                modifier = Modifier.align(Alignment.CenterVertically)
-            )
-
-            OutlinedButton(
-                onClick = { if (index < photos.lastIndex) onIndex(index + 1) },
-                enabled = index < photos.lastIndex
-            ) {
-                Text("NEXT")
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Button(
-            onClick = onEditCurrent,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Lime,
-                contentColor = Black
-            )
-        ) {
-            Text("EDIT THIS PHOTO", fontWeight = FontWeight.Bold)
-        }
-
-        Spacer(Modifier.height(12.dp))
+private fun captionTemplate(language: String, tone: String, platform: String): String {
+    if (language == "Afrikaans") return when (tone) {
+        "Bold" -> "Elke foto vertel 'n storie. Hierdie is myne. 📸 #IDTPhotography"
+        "Emotional" -> "Klein oomblikke, groot herinneringe. Dankbaar vir elkeen wat ek kan vasvang. 📸"
+        else -> "Lig, oomblik en herinnering—vasgevang vir altyd. 📸 #IDTPhotography"
+    }
+    return when (tone) {
+        "Bold" -> "No filters on the moment. Just a frame worth remembering. 📸 #IDTPhotography"
+        "Emotional" -> "Some moments pass. The feeling deserves to stay. 📸"
+        else -> "A moment captured, a memory kept. 📸 #IDTPhotography"
     }
 }
 
-@Composable
-fun CaptionScreen(
-    text: String,
-    language: String,
-    style: String,
-    onText: (String) -> Unit,
-    onLanguage: (String) -> Unit,
-    onStyle: (String) -> Unit,
-    onHome: () -> Unit
-) {
-    val clipboard = LocalClipboardManager.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp)
-    ) {
-        Text(
-            "← BACK",
-            color = Lime,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.clickable { onHome() }
-        )
+private fun loadBitmap(context: Context, uri: Uri): Bitmap? = try { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } } catch (_: Exception) { null }
+private fun loadLogo(context: Context): Bitmap? = try { context.assets.open("idt_logo_transparent.png").use { BitmapFactory.decodeStream(it) } } catch (_: Exception) { try { context.assets.open("idt_logo.png").use { BitmapFactory.decodeStream(it) } } catch (_: Exception) { null } }
 
-        Spacer(Modifier.height(24.dp))
 
-        Text(
-            "CAPTION & POST",
-            color = White,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.ExtraBold
-        )
-
-        Spacer(Modifier.height(18.dp))
-
-        Text("Language", color = White)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("English", "Afrikaans").forEach {
-                FilterChip(
-                    selected = language == it,
-                    onClick = { onLanguage(it) },
-                    label = { Text(it) }
-                )
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Text("Style", color = White)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Natural", "Poetic", "Bold", "Funny").forEach {
-                FilterChip(
-                    selected = style == it,
-                    onClick = { onStyle(it) },
-                    label = { Text(it) }
-                )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Button(
-            onClick = { onText(makeCaption(language, style)) },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Lime,
-                contentColor = Black
-            )
-        ) {
-            Text("GENERATE CAPTION", fontWeight = FontWeight.Bold)
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        OutlinedTextField(
-            value = text,
-            onValueChange = onText,
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 5,
-            label = { Text("Your caption") },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Lime,
-                focusedLabelColor = Lime,
-                cursorColor = Lime
-            )
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        Button(
-            onClick = {
-                clipboard.setText(AnnotatedString(text))
-            },
-            enabled = text.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Lime,
-                contentColor = Black
-            )
-        ) {
-            Text("COPY CAPTION")
-        }
-
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-fun makeCaption(language: String, style: String): String {
-    val english = when (style) {
-        "Poetic" -> listOf(
-            "Some moments speak quietly, but stay forever.",
-            "Light, life and little pieces of forever.",
-            "A memory made of light and feeling."
-        ).random()
-
-        "Bold" -> listOf(
-            "Made to be remembered.",
-            "No ordinary moments.",
-            "This is what life looks like."
-        ).random()
-
-        "Funny" -> listOf(
-            "Proof that I was outside and being productive.",
-            "Professional memory collector. Amateur everything else.",
-            "Camera roll doing the heavy lifting again."
-        ).random()
-
-        else -> listOf(
-            "A moment worth keeping.",
-            "Life lately, through my lens.",
-            "Little moments. Big memories."
-        ).random()
-    }
-
-    val afrikaans = when (style) {
-        "Poetic" -> listOf(
-            "Sommige oomblikke praat sag, maar bly vir altyd.",
-            "Lig, lewe en klein stukkies ewigheid.",
-            "‘n Herinnering gevang in lig en gevoel."
-        ).random()
-
-        "Bold" -> listOf(
-            "Gemaak om onthou te word.",
-            "Geen gewone oomblikke nie.",
-            "Dis hoe die lewe lyk."
-        ).random()
-
-        "Funny" -> listOf(
-            "Bewys dat ek buite was en iets gedoen het.",
-            "Professionele herinnering-versamelaar.",
-            "My kamera doen die harde werk."
-        ).random()
-
-        else -> listOf(
-            "‘n Oomblik wat die moeite werd is om te hou.",
-            "Die lewe, deur my lens.",
-            "Klein oomblikke. Groot herinneringe."
-        ).random()
-    }
-
-    return if (language == "Afrikaans") afrikaans else english
-}
-
-fun processBitmap(
-    source: Bitmap,
-    brightness: Float,
-    contrast: Float,
-    saturation: Float,
-    sharpness: Float
-): Bitmap {
-    val output = Bitmap.createBitmap(
-        source.width,
-        source.height,
-        Bitmap.Config.ARGB_8888
-    )
-
+private fun processBitmap(src: Bitmap, brightness: Float, contrast: Float, saturation: Float, sharpness: Float): Bitmap {
+    val output = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(output)
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-    val matrix = android.graphics.ColorMatrix()
-
-    val satMatrix = android.graphics.ColorMatrix()
-    satMatrix.setSaturation(saturation)
-
-    val contrastScale = contrast
-    val offset = brightness * 255f
-
-    val adjustment = android.graphics.ColorMatrix(
-        floatArrayOf(
-            contrastScale, 0f, 0f, 0f, offset,
-            0f, contrastScale, 0f, 0f, offset,
-            0f, 0f, contrastScale, 0f, offset,
-            0f, 0f, 0f, 1f, 0f
-        )
-    )
-
-    matrix.postConcat(satMatrix)
-    matrix.postConcat(adjustment)
-
-    paint.colorFilter = android.graphics.ColorMatrixColorFilter(matrix)
-
-    canvas.drawBitmap(source, 0f, 0f, paint)
-
-    if (sharpness > 0.01f) {
-        val sharpened = sharpenBitmap(output, sharpness)
-        output.recycle()
-        return sharpened
+    val matrix = android.graphics.ColorMatrix().apply {
+        val s = saturation
+        val sr = 0.213f * (1 - s); val sg = 0.715f * (1 - s); val sb = 0.072f * (1 - s)
+        set(floatArrayOf(sr+s, sg, sb, 0f, brightness*255, sr, sg+s, sb, 0f, brightness*255, sr, sg, sb+s, 0f, brightness*255, 0f,0f,0f,1f,0f))
+        postConcat(android.graphics.ColorMatrix().apply { set(floatArrayOf(contrast,0f,0f,0f,128f*(1-contrast),0f,contrast,0f,0f,128f*(1-contrast),0f,0f,contrast,0f,128f*(1-contrast),0f,0f,0f,1f,0f) })
     }
-
-    return output
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(matrix) }
+    canvas.drawBitmap(src, 0f, 0f, paint)
+    return if (sharpness > 0.01f) sharpen(output, sharpness) else output
 }
 
-fun sharpenBitmap(source: Bitmap, amount: Float): Bitmap {
-    val width = source.width
-    val height = source.height
-
-    val input = IntArray(width * height)
-    source.getPixels(input, 0, width, 0, 0, width, height)
-
-    val output = input.copyOf()
-    val strength = amount * 0.7f
-
-    for (y in 1 until height - 1) {
-        for (x in 1 until width - 1) {
-            val i = y * width + x
-
-            for (channel in 0..2) {
-                val shift = when (channel) {
-                    0 -> 16
-                    1 -> 8
-                    else -> 0
-                }
-
-                val center = (input[i] shr shift) and 255
-                val top = (input[i - width] shr shift) and 255
-                val bottom = (input[i + width] shr shift) and 255
-                val left = (input[i - 1] shr shift) and 255
-                val right = (input[i + 1] shr shift) and 255
-
-                val value = (
-                    center * (1f + 4f * strength) -
-                    (top + bottom + left + right) * strength
-                ).toInt().coerceIn(0, 255)
-
-                output[i] = (output[i] and (255 shl shift).inv()) or
-                    (value shl shift)
-            }
+private fun sharpen(bitmap: Bitmap, amount: Float): Bitmap {
+    if (bitmap.width < 3 || bitmap.height < 3 || amount <= 0f) return bitmap
+    val src = bitmap.getPixelsArray(); val dst = src.copyOf(); val w = bitmap.width; val h = bitmap.height
+    val a = amount.coerceIn(0f, 1f)
+    for (y in 1 until h-1) for (x in 1 until w-1) {
+        val i = y*w+x
+        for (shift in 0..2) {
+            val c = (src[i] ushr (shift*8)) and 255
+            val n = ((src[i-w] ushr (shift*8)) and 255); val s = ((src[i+w] ushr (shift*8)) and 255)
+            val l = ((src[i-1] ushr (shift*8)) and 255); val r = ((src[i+1] ushr (shift*8)) and 255)
+            val v = (c + (c*4 - n-s-l-r)*a).toInt().coerceIn(0,255)
+            dst[i] = (dst[i] and (0xFF shl (shift*8)).inv()) or (v shl (shift*8))
         }
     }
-
-    return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
-        it.setPixels(output, 0, width, 0, 0, width, height)
-    }
+    val out = Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888); out.setPixels(dst,0,w,0,0,w,h); return out
 }
+private fun Bitmap.getPixelsArray(): IntArray { val arr = IntArray(width*height); getPixels(arr,0,width,0,0,width,height); return arr }
 
-fun applyWatermark(
-    photo: Bitmap,
-    logo: Bitmap,
-    corner: String,
-    sizeFraction: Float,
-    opacity: Float
-): Bitmap {
-    val result = photo.copy(Bitmap.Config.ARGB_8888, true)
-    val canvas = Canvas(result)
 
-    val targetWidth = (photo.width * sizeFraction).toInt()
-    val targetHeight = (targetWidth.toFloat() * logo.height / logo.width).toInt()
-
-    val margin = (photo.width * 0.03f).toInt()
-
-    val left = when {
-        corner.contains("left") -> margin
-        else -> photo.width - targetWidth - margin
+private fun saveEdited(context: Context, photo: Bitmap, addLogo: Boolean, corner: Int, opacity: Float, scale: Float) {
+    val finalBitmap = if (addLogo) applyWatermark(context, photo, corner, opacity, scale) else photo
+    val filename = "IDT_${System.currentTimeMillis()}.jpg"
+    val values = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+        if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/IDT Photography")
     }
-
-    val top = when {
-        corner.contains("Top") -> margin
-        else -> photo.height - targetHeight - margin
-    }
-
-    val destination = Rect(
-        left,
-        top,
-        left + targetWidth,
-        top + targetHeight
-    )
-
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        alpha = (opacity * 255).toInt().coerceIn(0, 255)
-    }
-
-    canvas.drawBitmap(logo, null, destination, paint)
-    return result
-}
-
-fun saveBitmap(context: android.content.Context, bitmap: Bitmap) {
+    val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
     try {
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "IDT_Edit_${System.currentTimeMillis()}.jpg")
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/IDT Photography")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
-        }
-
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-
-        if (uri != null) {
-            resolver.openOutputStream(uri)?.use { stream ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-            }
-
-            Toast.makeText(
-                context,
-                "Saved to Pictures/IDT Photography",
-                Toast.LENGTH_LONG
-            ).show()
-        } else {
-            Toast.makeText(context, "Could not save photo", Toast.LENGTH_LONG).show()
-        }
-    } catch (e: Exception) {
-        Toast.makeText(context, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
-    }
+        uri?.let { context.contentResolver.openOutputStream(it)?.use { out -> finalBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out) } }
+        Toast.makeText(context, "Saved to Pictures/IDT Photography", Toast.LENGTH_LONG).show()
+    } catch (e: Exception) { Toast.makeText(context, "Save failed: ${e.message}", Toast.LENGTH_LONG).show() }
+}
+private fun applyWatermark(context: Context, photo: Bitmap, corner: Int, opacity: Float, scale: Float): Bitmap {
+    val out = photo.copy(Bitmap.Config.ARGB_8888, true); val canvas = Canvas(out); val logo = loadLogo(context) ?: return out
+    val width = (photo.width*scale).toInt().coerceAtLeast(60); val height = (width.toFloat()*logo.height/logo.width).toInt(); val margin = (photo.width*.035f).toInt()
+    val left = when(corner) { 0,2 -> margin; 1,3 -> photo.width-width-margin; else -> (photo.width-width)/2 }
+    val top = when(corner) { 0,1 -> margin; 2,3 -> photo.height-height-margin; else -> (photo.height-height)/2 }
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = (opacity*255).toInt().coerceIn(0,255) }
+    canvas.drawBitmap(logo, null, Rect(left,top,left+width,top+height), paint); return out
 }
